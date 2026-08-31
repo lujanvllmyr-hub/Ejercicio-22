@@ -22,7 +22,6 @@ class Proyectil:
     def dibujar(self, pantalla):
         pygame.draw.rect(pantalla, self.color, self.rect)
 
-
 class Nave:
     def __init__(self, x, y, ancho, alto, velocidad, salud):
         self.rect = pygame.Rect(x, y, ancho, alto)
@@ -37,7 +36,6 @@ class Nave:
 
     def dibujar(self, pantalla):
         pygame.draw.rect(pantalla, (255, 255, 255), self.rect)
-
 
 class Jugador(Nave):
     def __init__(self, x, y):
@@ -73,7 +71,6 @@ class Jugador(Nave):
         )
         pygame.draw.rect(pantalla, (180, 220, 255), self.rect)
 
-
 class Enemigo(Nave):
     def __init__(self, x, y, velocidad, dificultad):
         super().__init__(x, y, 42, 30, velocidad * dificultad, 3)
@@ -100,7 +97,6 @@ class Enemigo(Nave):
             ],
         )
 
-
 class JefeFinal(Enemigo):
     def __init__(self, x, y, dificultad):
         super().__init__(x, y, 2.2, dificultad)
@@ -125,10 +121,9 @@ class JefeFinal(Enemigo):
         pygame.draw.rect(
             pantalla,
             (255, 50, 50),
-            (self.rect.x + 20, self.rect.y + 20, 80 * (self.salud / 25), 18),
+            (self.rect.x + 20, self.rect.y + 20, 80 * (self.salud / 25), 18)
         )
-
-
+        
 class Obstaculo:
     def __init__(self, x, y, ancho, alto):
         self.rect = pygame.Rect(x, y, ancho, alto)
