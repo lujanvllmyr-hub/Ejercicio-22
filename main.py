@@ -110,9 +110,14 @@ class Juego:
 
         return False
 
-    def detectar_colisiones(self):
+    def _actualizar_proyectiles_jugador(self):
+        """Actualiza la posición de cada proyectil del jugador."""
         for proyectil in self.proyectiles_jugador[:]:
             proyectil.actualizar()
+
+    def _detectar_colisiones_proyectiles_enemigos(self):
+        """Detecta impactos de proyectiles contra enemigos."""
+        for proyectil in self.proyectiles_jugador[:]:
             for enemigo in self.enemigos[:]:
                 if proyectil.rect.colliderect(enemigo.rect):
                     enemigo.salud -= 1
@@ -121,22 +126,33 @@ class Juego:
                         self.enemigos.remove(enemigo)
                     break
 
-            if self.boss is not None and proyectil.rect.colliderect(self.boss.rect):
-                self.boss.salud -= 1
-                self.proyectiles_jugador.remove(proyectil)
-                if self.boss.salud <= 0:
-                    self.estado = "victoria"
-                    self.texto_fin = "¡Victoria! Has derrotado al jefe final."
-                break
+    def _detectar_colisiones_proyectiles_jefe(self):
+        """Detecta impactos de proyectiles contra el jefe final."""
+        if self.boss is not None:
+            for proyectil in self.proyectiles_jugador[:]:
+                if proyectil.rect.colliderect(self.boss.rect):
+                    self.boss.salud -= 1
+                    self.proyectiles_jugador.remove(proyectil)
+                    if self.boss.salud <= 0:
+                        self.estado = "victoria"
+                        self.texto_fin = "¡Victoria! Has derrotado al jefe final."
+                    break
 
+    def _limpiar_proyectiles_fuera_de_pantalla(self):
+        """Elimina proyectiles que salen de la pantalla por la derecha."""
+        for proyectil in self.proyectiles_jugador[:]:
             if proyectil.rect.x > ANCHO_PANTALLA:
                 self.proyectiles_jugador.remove(proyectil)
 
+    def _detectar_colisiones_proyectiles_obstaculos(self):
+        """Detecta impactos de proyectiles contra obstáculos."""
         for obstaculo in self.obstaculos:
             for proyectil in self.proyectiles_jugador[:]:
                 if proyectil.rect.colliderect(obstaculo.rect):
                     self.proyectiles_jugador.remove(proyectil)
 
+    def _detectar_colisiones_enemigos_jugador(self):
+        """Detecta colisiones entre enemigos/jefe y jugador, aplicando daño."""
         if self.estado == "jugando":
             for enemigo in self.enemigos:
                 if enemigo.rect.colliderect(self.jugador.rect):
@@ -148,6 +164,15 @@ class Juego:
             if self.jugador.salud <= 0:
                 self.estado = "derrota"
                 self.texto_fin = "Derrota. La nave cayó en combate."
+
+    def detectar_colisiones(self):
+        """Coordina todas las detecciones de colisión del juego."""
+        self._actualizar_proyectiles_jugador()
+        self._detectar_colisiones_proyectiles_enemigos()
+        self._detectar_colisiones_proyectiles_jefe()
+        self._limpiar_proyectiles_fuera_de_pantalla()
+        self._detectar_colisiones_proyectiles_obstaculos()
+        self._detectar_colisiones_enemigos_jugador()
 
     def actualizar(self):
         if self.estado != "jugando":
