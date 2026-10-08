@@ -3,14 +3,28 @@ import os
 import sys
 import time
 from abc import ABC, abstractmethod
+from enum import Enum
 
 import pygame
 
-from entidades import Proyectil, Nave, Jugador, Enemigo, JefeFinal, Obstaculo
+from entidades import (
+    Proyectil,
+    Nave,
+    Jugador,
+    Enemigo,
+    JefeFinal,
+    Obstaculo,
+    resolver_colisiones_aabb,
+)
 
 ANCHO_PANTALLA = 960
 ALTO_PANTALLA = 540
 FPS = 60
+
+
+class EstadoJuego(Enum):
+    MENU = "menu"
+    NIVEL_1 = "nivel1"
 
 
 class EscenaBase(ABC):
@@ -69,7 +83,7 @@ class EscenaMenu(EscenaBase):
             pygame.K_RETURN,
             pygame.K_KP_ENTER,
         ):
-            self.gestor_escenas.cambiar_escena("nivel1")
+            self.gestor_escenas.cambiar_escena(EstadoJuego.NIVEL_1)
 
     def actualizar(self, dt):
         pass
@@ -83,6 +97,9 @@ class EscenaMenu(EscenaBase):
 
 
 class Juego(EscenaBase):
+    DAÑO_CONTACTO = 10
+    DURACION_INVULNERABILIDAD = 1.0
+
     def __init__(self, pantalla):
         self.pantalla = pantalla
         self.reloj = pygame.time.Clock()
@@ -93,8 +110,12 @@ class Juego(EscenaBase):
         self.font = pygame.font.SysFont(None, 32)
 
         self.jugador = Jugador(60, ALTO_PANTALLA // 2)
-        self._jugador_x = float(self.jugador.rect.x)
-        self._jugador_y = float(self.jugador.rect.y)
+        self.invulnerabilidad_restante = 0.0
+        self.suelo = pygame.Rect(0, ALTO_PANTALLA - 20, ANCHO_PANTALLA, 20)
+        self.objetos_estaticos = [
+            self.suelo,
+            pygame.Rect(430, 270, 100, 22),
+        ]
         self.enemigos = []
         self.obstaculos = []
         self.proyectiles_jugador = []
@@ -105,9 +126,9 @@ class Juego(EscenaBase):
 
         self.gestor_escenas = GestorEscenas()
         self.gestor_escenas.registrar_escena(
-            "menu", EscenaMenu(self.gestor_escenas)
+            EstadoJuego.MENU, EscenaMenu(self.gestor_escenas)
         )
-        self.gestor_escenas.registrar_escena("nivel1", self)
+        self.gestor_escenas.registrar_escena(EstadoJuego.NIVEL_1, self)
 
     def crear_escenario(self):
         self.dificultad = self.escenario
@@ -141,48 +162,39 @@ class Juego(EscenaBase):
             self.boss = JefeFinal(700, 180, self.dificultad)
 
     def cambiar_escenario(self):
-        if self.escenario == 1 and self.jugador.rect.x >= 750:
+        if self.escenario == 1 and not self.enemigos:
             self.escenario = 2
             self.crear_escenario()
         elif self.escenario == 2 and not self.enemigos:
             self.escenario = 3
             self.crear_escenario()
 
-    def manejar_eventos(self, dt):
+    def manejar_eventos(self):
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 return False
             self.gestor_escenas.manejar_evento(evento)
 
-        if self.gestor_escenas.estado_actual == "nivel1":
-            teclas = pygame.key.get_pressed()
-            movimiento_x = int(teclas[pygame.K_d] or teclas[pygame.K_RIGHT]) - int(
-                teclas[pygame.K_a] or teclas[pygame.K_LEFT]
-            )
-            movimiento_y = int(teclas[pygame.K_s] or teclas[pygame.K_DOWN]) - int(
-                teclas[pygame.K_w] or teclas[pygame.K_UP]
-            )
-            velocidad = self.jugador.velocidad * FPS
-            self._jugador_x = max(
-                0.0,
-                min(
-                    ANCHO_PANTALLA - self.jugador.rect.width,
-                    self._jugador_x + movimiento_x * velocidad * dt,
-                ),
-            )
-            self._jugador_y = max(
-                0.0,
-                min(
-                    ALTO_PANTALLA - self.jugador.rect.height,
-                    self._jugador_y + movimiento_y * velocidad * dt,
-                ),
-            )
-            self.jugador.rect.x = round(self._jugador_x)
-            self.jugador.rect.y = round(self._jugador_y)
-
-            self.jugador.cooldown = max(0.0, self.jugador.cooldown - 1 / FPS)
-
         return True
+
+    def _actualizar_jugador(self, dt):
+        teclas = pygame.key.get_pressed()
+        movimiento_x = int(teclas[pygame.K_d] or teclas[pygame.K_RIGHT]) - int(
+            teclas[pygame.K_a] or teclas[pygame.K_LEFT]
+        )
+        movimiento_y = int(teclas[pygame.K_s] or teclas[pygame.K_DOWN]) - int(
+            teclas[pygame.K_w] or teclas[pygame.K_UP]
+        )
+
+        velocidad = self.jugador.velocidad * FPS
+        self.jugador.vx = movimiento_x * velocidad
+        self.jugador.vy = movimiento_y * velocidad
+
+        objetos_colisionables = self.objetos_estaticos + [
+            obstaculo.rect for obstaculo in self.obstaculos
+        ]
+        resolver_colisiones_aabb(self.jugador, objetos_colisionables, dt)
+        self.jugador.cooldown = max(0.0, self.jugador.cooldown - dt)
 
     def manejar_evento(self, evento):
         if evento.type == pygame.KEYDOWN and evento.key == pygame.K_SPACE:
@@ -193,20 +205,11 @@ class Juego(EscenaBase):
     def actualizar_enemigos(self):
         for enemigo in self.enemigos:
             enemigo.actualizar(self.dificultad)
-            if enemigo.rect.colliderect(self.jugador.rect):
-                self.crear_escenario()
-                return True
-
-            if enemigo.rect.bottom >= ALTO_PANTALLA:
-                enemigo.rect.y = ALTO_PANTALLA - enemigo.rect.height
+            if enemigo.rect.bottom > self.suelo.top:
+                enemigo.rect.bottom = self.suelo.top
 
         if self.boss is not None:
             self.boss.actualizar(self.dificultad)
-            if self.boss.rect.colliderect(self.jugador.rect):
-                self.crear_escenario()
-                return True
-
-        return False
 
     def _actualizar_proyectiles_jugador(self):
         """Actualiza la posición de cada proyectil del jugador."""
@@ -250,18 +253,27 @@ class Juego(EscenaBase):
                     self.proyectiles_jugador.remove(proyectil)
 
     def _detectar_colisiones_enemigos_jugador(self):
-        """Detecta colisiones entre enemigos/jefe y jugador, aplicando daño."""
-        if self.estado == "jugando":
-            for enemigo in self.enemigos:
-                if enemigo.rect.colliderect(self.jugador.rect):
-                    self.jugador.salud -= 1
+        """Aplica un único golpe por periodo de invulnerabilidad."""
+        if self.estado != "jugando" or self.invulnerabilidad_restante > 0:
+            return
 
-            if self.boss is not None and self.boss.rect.colliderect(self.jugador.rect):
-                self.jugador.salud -= 1
+        contacto_enemigo = any(
+            enemigo.rect.colliderect(self.jugador.rect) for enemigo in self.enemigos
+        )
+        contacto_jefe = (
+            self.boss is not None
+            and self.boss.rect.colliderect(self.jugador.rect)
+        )
+        if not (contacto_enemigo or contacto_jefe):
+            return
 
-            if self.jugador.salud <= 0:
-                self.estado = "derrota"
-                self.texto_fin = "Derrota. La nave cayó en combate."
+        self.jugador.salud -= self.DAÑO_CONTACTO
+        self.invulnerabilidad_restante = self.DURACION_INVULNERABILIDAD
+
+        if self.jugador.salud <= 0:
+            self.jugador.salud = 0
+            self.estado = "derrota"
+            self.texto_fin = "Derrota. La nave cayó en combate."
 
     def detectar_colisiones(self):
         """Coordina todas las detecciones de colisión del juego."""
@@ -276,14 +288,13 @@ class Juego(EscenaBase):
         if self.estado != "jugando":
             return
 
+        self.invulnerabilidad_restante = max(
+            0.0, self.invulnerabilidad_restante - dt
+        )
+        self._actualizar_jugador(dt)
         self.cambiar_escenario()
-        if self.actualizar_enemigos():
-            return
+        self.actualizar_enemigos()
         self.detectar_colisiones()
-
-        if self.jugador.salud <= 0:
-            self.estado = "derrota"
-            self.texto_fin = "Derrota. La nave fue destruida."
 
     def dibujar_hud(self, pantalla):
         texto_escenario = self.font.render(f"Escenario: {self.escenario} | Dificultad: {self.dificultad}", True, (255, 255, 255))
@@ -300,6 +311,10 @@ class Juego(EscenaBase):
             pygame.draw.rect(pantalla, (15, 24, 40), (0, 0, ANCHO_PANTALLA, ALTO_PANTALLA))
         else:
             pygame.draw.rect(pantalla, (28, 12, 24), (0, 0, ANCHO_PANTALLA, ALTO_PANTALLA))
+
+        for objeto in self.objetos_estaticos:
+            pygame.draw.rect(pantalla, (70, 70, 90), objeto)
+            pygame.draw.rect(pantalla, (160, 160, 180), objeto, 2)
 
         for obstaculo in self.obstaculos:
             obstaculo.dibujar(pantalla)
@@ -332,7 +347,7 @@ class Juego(EscenaBase):
         estado_juego = "jugando"
         while corriendo:
             dt = self.reloj.tick(FPS) / 1000.0
-            corriendo = self.manejar_eventos(dt)
+            corriendo = self.manejar_eventos()
             self.gestor_escenas.actualizar(dt)
             self.gestor_escenas.dibujar(self.pantalla)
             pygame.display.flip()

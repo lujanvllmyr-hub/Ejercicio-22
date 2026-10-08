@@ -1,6 +1,5 @@
-
-import pygame
 import math
+import pygame
 
 
 ANCHO_PANTALLA = 960
@@ -39,6 +38,10 @@ class Nave:
 class Jugador(Nave):
     def __init__(self, x, y):
         super().__init__(x, y, 46, 28, 6, 100)
+        self.x = float(x)
+        self.y = float(y)
+        self.vx = 0.0
+        self.vy = 0.0
         self.cooldown = 0.0
 
     def disparar(self):
@@ -69,6 +72,55 @@ class Jugador(Nave):
             ],
         )
         pygame.draw.rect(pantalla, (180, 220, 255), self.rect)
+
+
+def resolver_colisiones_aabb(
+    jugador: Jugador,
+    objetos_estaticos: list[pygame.Rect],
+    dt: float,
+) -> None:
+    """Mueve al jugador por ejes y detiene la velocidad al colisionar."""
+    if not math.isfinite(dt) or dt < 0:
+        raise ValueError("dt debe ser un número finito no negativo.")
+
+    jugador.x += jugador.vx * dt
+    jugador.rect.x = round(jugador.x)
+
+    if jugador.rect.left < 0:
+        jugador.rect.left = 0
+        jugador.vx = 0.0
+    elif jugador.rect.right > ANCHO_PANTALLA:
+        jugador.rect.right = ANCHO_PANTALLA
+        jugador.vx = 0.0
+
+    for objeto in objetos_estaticos:
+        if jugador.rect.colliderect(objeto):
+            if jugador.vx > 0:
+                jugador.rect.right = objeto.left
+            elif jugador.vx < 0:
+                jugador.rect.left = objeto.right
+            jugador.vx = 0.0
+            jugador.x = float(jugador.rect.x)
+
+    jugador.y += jugador.vy * dt
+    jugador.rect.y = round(jugador.y)
+
+    if jugador.rect.top < 0:
+        jugador.rect.top = 0
+        jugador.vy = 0.0
+
+    for objeto in objetos_estaticos:
+        if jugador.rect.colliderect(objeto):
+            if jugador.vy > 0:
+                jugador.rect.bottom = objeto.top
+            elif jugador.vy < 0:
+                jugador.rect.top = objeto.bottom
+            jugador.vy = 0.0
+            jugador.y = float(jugador.rect.y)
+
+    jugador.x = float(jugador.rect.x) if jugador.vx == 0 else jugador.x
+    jugador.y = float(jugador.rect.y) if jugador.vy == 0 else jugador.y
+
 
 class Enemigo(Nave):
     def __init__(self, x, y, velocidad, dificultad):
