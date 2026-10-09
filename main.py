@@ -12,6 +12,7 @@ from entidades import (
     Nave,
     Jugador,
     Enemigo,
+    EnemigoPrueba,
     JefeFinal,
     Obstaculo,
     resolver_colisiones_aabb,
@@ -98,7 +99,6 @@ class EscenaMenu(EscenaBase):
 
 class Juego(EscenaBase):
     DAÑO_CONTACTO = 10
-    DURACION_INVULNERABILIDAD = 1.0
 
     def __init__(self, pantalla):
         self.pantalla = pantalla
@@ -110,7 +110,6 @@ class Juego(EscenaBase):
         self.font = pygame.font.SysFont(None, 32)
 
         self.jugador = Jugador(60, ALTO_PANTALLA // 2)
-        self.invulnerabilidad_restante = 0.0
         self.suelo = pygame.Rect(0, ALTO_PANTALLA - 20, ANCHO_PANTALLA, 20)
         self.objetos_estaticos = [
             self.suelo,
@@ -143,6 +142,7 @@ class Juego(EscenaBase):
                 Enemigo(700, 90, 1.8, self.dificultad),
                 Enemigo(770, 220, 2.0, self.dificultad),
                 Enemigo(830, 360, 2.2, self.dificultad),
+                EnemigoPrueba(300, ALTO_PANTALLA // 2 - 15),
             ]
 
         elif self.escenario == 2:
@@ -194,10 +194,13 @@ class Juego(EscenaBase):
             obstaculo.rect for obstaculo in self.obstaculos
         ]
         resolver_colisiones_aabb(self.jugador, objetos_colisionables, dt)
+        self.jugador.sincronizar_hurtbox()
         self.jugador.cooldown = max(0.0, self.jugador.cooldown - dt)
+        self.jugador.actualizar_ataque(dt)
 
     def manejar_evento(self, evento):
         if evento.type == pygame.KEYDOWN and evento.key == pygame.K_SPACE:
+            self.jugador.iniciar_ataque()
             bala = self.jugador.disparar()
             if bala is not None:
                 self.proyectiles_jugador.append(bala)
@@ -207,6 +210,7 @@ class Juego(EscenaBase):
             enemigo.actualizar(self.dificultad)
             if enemigo.rect.bottom > self.suelo.top:
                 enemigo.rect.bottom = self.suelo.top
+                enemigo.sincronizar_hurtbox()
 
         if self.boss is not None:
             self.boss.actualizar(self.dificultad)
@@ -220,10 +224,10 @@ class Juego(EscenaBase):
         """Detecta impactos de proyectiles contra enemigos."""
         for proyectil in self.proyectiles_jugador[:]:
             for enemigo in self.enemigos[:]:
-                if proyectil.rect.colliderect(enemigo.rect):
-                    enemigo.salud -= 1
+                if proyectil.rect.colliderect(enemigo.hurtbox):
+                    enemigo.recibir_dano(1)
                     self.proyectiles_jugador.remove(proyectil)
-                    if enemigo.salud <= 0:
+                    if not enemigo.esta_vivo():
                         self.enemigos.remove(enemigo)
                     break
 
@@ -231,10 +235,10 @@ class Juego(EscenaBase):
         """Detecta impactos de proyectiles contra el jefe final."""
         if self.boss is not None:
             for proyectil in self.proyectiles_jugador[:]:
-                if proyectil.rect.colliderect(self.boss.rect):
-                    self.boss.salud -= 1
+                if proyectil.rect.colliderect(self.boss.hurtbox):
+                    self.boss.recibir_dano(1)
                     self.proyectiles_jugador.remove(proyectil)
-                    if self.boss.salud <= 0:
+                    if not self.boss.esta_vivo():
                         self.estado = "victoria"
                         self.texto_fin = "¡Victoria! Has derrotado al jefe final."
                     break
@@ -254,26 +258,57 @@ class Juego(EscenaBase):
 
     def _detectar_colisiones_enemigos_jugador(self):
         """Aplica un único golpe por periodo de invulnerabilidad."""
-        if self.estado != "jugando" or self.invulnerabilidad_restante > 0:
+        if (
+            self.estado != "jugando"
+            or self.jugador.temporizador_invulnerable > 0
+        ):
             return
 
         contacto_enemigo = any(
-            enemigo.rect.colliderect(self.jugador.rect) for enemigo in self.enemigos
+            enemigo.hurtbox.colliderect(self.jugador.hurtbox)
+            for enemigo in self.enemigos
         )
         contacto_jefe = (
             self.boss is not None
-            and self.boss.rect.colliderect(self.jugador.rect)
+            and self.boss.hurtbox.colliderect(self.jugador.hurtbox)
         )
         if not (contacto_enemigo or contacto_jefe):
             return
 
-        self.jugador.salud -= self.DAÑO_CONTACTO
-        self.invulnerabilidad_restante = self.DURACION_INVULNERABILIDAD
+        self.jugador.recibir_dano(self.DAÑO_CONTACTO)
 
-        if self.jugador.salud <= 0:
-            self.jugador.salud = 0
+        if not self.jugador.esta_vivo():
             self.estado = "derrota"
             self.texto_fin = "Derrota. La nave cayó en combate."
+
+    def _actualizar_temporizadores_invulnerabilidad(self, dt):
+        personajes = [self.jugador, *self.enemigos]
+        if self.boss is not None:
+            personajes.append(self.boss)
+
+        for personaje in personajes:
+            personaje.actualizar_temporizador_invulnerable(dt)
+
+    def _detectar_colisiones_ataque(self):
+        attackbox = self.jugador.attackbox
+        if attackbox is None or self.jugador.ataque_aplicado:
+            return
+
+        objetivos = self.enemigos[:]
+        if self.boss is not None:
+            objetivos.append(self.boss)
+
+        for objetivo in objetivos:
+            if attackbox.colliderect(objetivo.hurtbox):
+                objetivo.recibir_dano(1)
+                self.jugador.ataque_aplicado = True
+                if not objetivo.esta_vivo():
+                    if objetivo is self.boss:
+                        self.estado = "victoria"
+                        self.texto_fin = "¡Victoria! Has derrotado al jefe final."
+                    elif objetivo in self.enemigos:
+                        self.enemigos.remove(objetivo)
+                break
 
     def detectar_colisiones(self):
         """Coordina todas las detecciones de colisión del juego."""
@@ -282,15 +317,14 @@ class Juego(EscenaBase):
         self._detectar_colisiones_proyectiles_jefe()
         self._limpiar_proyectiles_fuera_de_pantalla()
         self._detectar_colisiones_proyectiles_obstaculos()
+        self._detectar_colisiones_ataque()
         self._detectar_colisiones_enemigos_jugador()
 
     def actualizar(self, dt):
         if self.estado != "jugando":
             return
 
-        self.invulnerabilidad_restante = max(
-            0.0, self.invulnerabilidad_restante - dt
-        )
+        self._actualizar_temporizadores_invulnerabilidad(dt)
         self._actualizar_jugador(dt)
         self.cambiar_escenario()
         self.actualizar_enemigos()
@@ -331,6 +365,9 @@ class Juego(EscenaBase):
             proyectil.dibujar(pantalla)
 
         self.dibujar_hud(pantalla)
+
+        if self.jugador.attackbox is not None:
+            pygame.draw.rect(pantalla, (255, 220, 80), self.jugador.attackbox, 2)
 
         if self.estado != "jugando":
             overlay = pygame.Surface((ANCHO_PANTALLA, ALTO_PANTALLA), pygame.SRCALPHA)

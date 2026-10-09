@@ -1,6 +1,8 @@
 import math
 import pygame
 
+from componente_salud import ComponenteSalud
+
 
 ANCHO_PANTALLA = 960
 ALTO_PANTALLA = 540
@@ -21,21 +23,58 @@ class Proyectil:
         pygame.draw.rect(pantalla, self.color, self.rect)
 
 class Nave:
+    DURACION_INVULNERABILIDAD = 1.0
+
     def __init__(self, x, y, ancho, alto, velocidad, salud):
         self.rect = pygame.Rect(x, y, ancho, alto)
+        self.hurtbox = self.rect.copy()
         self.velocidad = velocidad
-        self.salud = salud
+        self.componente_salud = ComponenteSalud(salud)
+        self.temporizador_invulnerable = 0
+
+    @property
+    def salud(self):
+        return self.componente_salud.vida_actual
+
+    @salud.setter
+    def salud(self, cantidad):
+        self.componente_salud.establecer_vida(cantidad)
+
+    def recibir_dano(self, cantidad):
+        if self.temporizador_invulnerable > 0:
+            return self.salud
+
+        salud_anterior = self.salud
+        salud_actual = self.componente_salud.recibir_dano(cantidad)
+        if salud_actual < salud_anterior:
+            self.temporizador_invulnerable = self.DURACION_INVULNERABILIDAD
+        return salud_actual
+
+    def esta_vivo(self):
+        return self.componente_salud.esta_vivo()
+
+    def actualizar_temporizador_invulnerable(self, dt):
+        self.temporizador_invulnerable = max(
+            0.0, self.temporizador_invulnerable - dt
+        )
+
+    def sincronizar_hurtbox(self):
+        self.hurtbox.update(self.rect)
 
     def mover(self, dx, dy):
         self.rect.x += dx
         self.rect.y += dy
         self.rect.x = max(0, min(ANCHO_PANTALLA - self.rect.width, self.rect.x))
         self.rect.y = max(0, min(ALTO_PANTALLA - self.rect.height, self.rect.y))
+        self.sincronizar_hurtbox()
 
     def dibujar(self, pantalla):
         pygame.draw.rect(pantalla, (255, 255, 255), self.rect)
 
 class Jugador(Nave):
+    DURACION_ATAQUE = 0.15
+    ANCHO_ATAQUE = 44
+
     def __init__(self, x, y):
         super().__init__(x, y, 46, 28, 6, 100)
         self.x = float(x)
@@ -43,6 +82,33 @@ class Jugador(Nave):
         self.vx = 0.0
         self.vy = 0.0
         self.cooldown = 0.0
+        self.attackbox = None
+        self.ataque_restante = 0.0
+        self.ataque_aplicado = False
+
+    def iniciar_ataque(self):
+        if self.attackbox is not None:
+            return
+
+        self.attackbox = pygame.Rect(
+            self.hurtbox.right,
+            self.hurtbox.top,
+            self.ANCHO_ATAQUE,
+            self.hurtbox.height,
+        )
+        self.ataque_restante = self.DURACION_ATAQUE
+        self.ataque_aplicado = False
+
+    def actualizar_ataque(self, dt):
+        if self.attackbox is None:
+            return
+
+        self.ataque_restante = max(0.0, self.ataque_restante - dt)
+        if self.ataque_restante == 0.0:
+            self.attackbox = None
+            return
+
+        self.attackbox.topleft = (self.hurtbox.right, self.hurtbox.top)
 
     def disparar(self):
         if self.cooldown > 0:
@@ -61,9 +127,19 @@ class Jugador(Nave):
         return bala
 
     def dibujar(self, pantalla):
+        color_nave = (
+            (255, 70, 70)
+            if self.temporizador_invulnerable > 0
+            else (80, 220, 255)
+        )
+        color_borde = (
+            (255, 190, 190)
+            if self.temporizador_invulnerable > 0
+            else (180, 220, 255)
+        )
         pygame.draw.polygon(
             pantalla,
-            (80, 220, 255),
+            color_nave,
             [
                 (self.rect.centerx, self.rect.top),
                 (self.rect.left, self.rect.bottom),
@@ -71,7 +147,7 @@ class Jugador(Nave):
                 (self.rect.right, self.rect.bottom),
             ],
         )
-        pygame.draw.rect(pantalla, (180, 220, 255), self.rect)
+        pygame.draw.rect(pantalla, color_borde, self.rect)
 
 
 def resolver_colisiones_aabb(
@@ -135,6 +211,7 @@ class Enemigo(Nave):
         if self.rect.left <= 80 or self.rect.right >= ANCHO_PANTALLA - 80:
             self.sentido *= -1
             self.rect.y += 26
+        self.sincronizar_hurtbox()
 
     def dibujar(self, pantalla):
         pygame.draw.polygon(
@@ -153,6 +230,7 @@ class JefeFinal(Enemigo):
         super().__init__(x, y, 2.2, dificultad)
         self.rect.width = 120
         self.rect.height = 90
+        self.sincronizar_hurtbox()
         self.salud = 25
         self.velocidad_base = 2.2
         self.phase = 0
@@ -165,6 +243,7 @@ class JefeFinal(Enemigo):
 
         if self.rect.left <= 120 or self.rect.right >= ANCHO_PANTALLA - 120:
             self.sentido *= -1
+        self.sincronizar_hurtbox()
 
     def dibujar(self, pantalla):
         pygame.draw.rect(pantalla, (255, 180, 60), self.rect)
@@ -175,6 +254,19 @@ class JefeFinal(Enemigo):
             (self.rect.x + 20, self.rect.y + 20, 80 * (self.salud / 25), 18)
         )
         
+
+class EnemigoPrueba(Nave):
+    def __init__(self, x, y):
+        super().__init__(x, y, 42, 30, 0, 3)
+
+    def actualizar(self, dificultad):
+        pass
+
+    def dibujar(self, pantalla):
+        pygame.draw.rect(pantalla, (180, 90, 255), self.rect)
+        pygame.draw.rect(pantalla, (230, 200, 255), self.hurtbox, 2)
+
+
 class Obstaculo:
     def __init__(self, x, y, ancho, alto):
         self.rect = pygame.Rect(x, y, ancho, alto)
