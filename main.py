@@ -12,7 +12,6 @@ from entidades import (
     Nave,
     Jugador,
     Enemigo,
-    EnemigoPrueba,
     JefeFinal,
     Obstaculo,
     resolver_colisiones_aabb,
@@ -142,7 +141,6 @@ class Juego(EscenaBase):
                 Enemigo(700, 90, 1.8, self.dificultad),
                 Enemigo(770, 220, 2.0, self.dificultad),
                 Enemigo(830, 360, 2.2, self.dificultad),
-                EnemigoPrueba(300, ALTO_PANTALLA // 2 - 15),
             ]
 
         elif self.escenario == 2:
@@ -197,19 +195,30 @@ class Juego(EscenaBase):
         self.jugador.sincronizar_hurtbox()
         self.jugador.cooldown = max(0.0, self.jugador.cooldown - dt)
         self.jugador.actualizar_ataque(dt)
+        teclas = pygame.key.get_pressed()
+        if teclas[pygame.K_SPACE]:
+            self._disparar_jugador()
 
     def manejar_evento(self, evento):
         if evento.type == pygame.KEYDOWN and evento.key == pygame.K_SPACE:
             self.jugador.iniciar_ataque()
-            bala = self.jugador.disparar()
-            if bala is not None:
-                self.proyectiles_jugador.append(bala)
+            self._disparar_jugador()
 
-    def actualizar_enemigos(self):
+    def _disparar_jugador(self):
+        bala = self.jugador.disparar()
+        if bala is not None:
+            self.proyectiles_jugador.append(bala)
+
+    def actualizar_enemigos(self, dt):
         for enemigo in self.enemigos:
-            enemigo.actualizar(self.dificultad)
-            if enemigo.rect.bottom > self.suelo.top:
-                enemigo.rect.bottom = self.suelo.top
+            enemigo.actualizar(dt, self.jugador)
+            posicion_anterior = enemigo.rect.topleft
+            enemigo.rect.clamp_ip(
+                pygame.Rect(0, 0, ANCHO_PANTALLA, self.suelo.top)
+            )
+            if enemigo.rect.topleft != posicion_anterior:
+                enemigo.x = float(enemigo.rect.x)
+                enemigo.y = float(enemigo.rect.y)
                 enemigo.sincronizar_hurtbox()
 
         if self.boss is not None:
@@ -266,6 +275,10 @@ class Juego(EscenaBase):
 
         contacto_enemigo = any(
             enemigo.hurtbox.colliderect(self.jugador.hurtbox)
+            or (
+                enemigo.attackbox is not None
+                and enemigo.attackbox.colliderect(self.jugador.hurtbox)
+            )
             for enemigo in self.enemigos
         )
         contacto_jefe = (
@@ -327,7 +340,7 @@ class Juego(EscenaBase):
         self._actualizar_temporizadores_invulnerabilidad(dt)
         self._actualizar_jugador(dt)
         self.cambiar_escenario()
-        self.actualizar_enemigos()
+        self.actualizar_enemigos(dt)
         self.detectar_colisiones()
 
     def dibujar_hud(self, pantalla):

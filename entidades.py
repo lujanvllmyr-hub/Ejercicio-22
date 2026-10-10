@@ -9,6 +9,13 @@ ALTO_PANTALLA = 540
 FPS = 60
 
 
+def calcular_distancia_entre_hitboxes(hitbox_a, hitbox_b):
+    """Calcula la distancia entre los centros de dos hitboxes."""
+    diferencia_x = hitbox_b.centerx - hitbox_a.centerx
+    diferencia_y = hitbox_b.centery - hitbox_a.centery
+    return math.hypot(diferencia_x, diferencia_y)
+
+
 class Proyectil:
     def __init__(self, x, y, ancho, alto, velocidad, color, direccion=1):
         self.rect = pygame.Rect(x, y, ancho, alto)
@@ -199,19 +206,96 @@ def resolver_colisiones_aabb(
 
 
 class Enemigo(Nave):
+    DURACION_INVULNERABILIDAD = 0.25
+    DISTANCIA_PERSECUCION = 300
+    DISTANCIA_ATAQUE = 50
+    DURACION_COOLDOWN_ATAQUE = 2.0
+    ANCHO_ATTACKBOX = 44
+
     def __init__(self, x, y, velocidad, dificultad):
         super().__init__(x, y, 42, 30, velocidad * dificultad, 3)
         self.sentido = 1
         self.base_y = y
         self.velocidad_base = velocidad
+        self.dificultad = dificultad
+        self.x = float(x)
+        self.y = float(y)
+        self.cooldown_ataque = 0.0
+        self.attackbox = None
+        self.estado_actual = "PATRULLA"
+        self.comportamientos = {
+            "PATRULLA": self._patrullar,
+            "PERSECUCIÓN": self._perseguir,
+            "ATAQUE": self._atacar,
+        }
 
-    def actualizar(self, dificultad):
-        self.velocidad = self.velocidad_base * dificultad
-        self.rect.x += self.sentido * self.velocidad
+    def actualizar(self, dt, jugador):
+        self.cooldown_ataque = max(0.0, self.cooldown_ataque - dt)
+        self.attackbox = None
+        self.comportamientos[self.estado_actual](dt, jugador)
+
+    def _patrullar(self, dt, jugador):
+        distancia = calcular_distancia_entre_hitboxes(self.hurtbox, jugador.hurtbox)
+        if distancia <= self.DISTANCIA_PERSECUCION:
+            self.estado_actual = "PERSECUCIÓN"
+            return
+
+        self.velocidad = self.velocidad_base * self.dificultad
+        self.x += self.sentido * self.velocidad * FPS * dt
+        self.rect.x = round(self.x)
         if self.rect.left <= 80 or self.rect.right >= ANCHO_PANTALLA - 80:
             self.sentido *= -1
-            self.rect.y += 26
         self.sincronizar_hurtbox()
+
+    def _perseguir(self, dt, jugador):
+        diferencia_x = jugador.hurtbox.centerx - self.hurtbox.centerx
+        diferencia_y = jugador.hurtbox.centery - self.hurtbox.centery
+        distancia = math.hypot(diferencia_x, diferencia_y)
+
+        if distancia > self.DISTANCIA_PERSECUCION:
+            self.estado_actual = "PATRULLA"
+            return
+
+        if distancia <= self.DISTANCIA_ATAQUE and self.cooldown_ataque <= 0:
+            self.estado_actual = "ATAQUE"
+            return
+
+        if distancia == 0:
+            diferencia_x = float(self.sentido or 1)
+            diferencia_y = 0.0
+            distancia = 1.0
+
+        distancia_objetivo = (
+            self.DISTANCIA_ATAQUE + 20
+            if self.cooldown_ataque > 0
+            else self.DISTANCIA_ATAQUE
+        )
+        error_distancia = distancia - distancia_objetivo
+        velocidad = self.velocidad_base * self.dificultad * FPS
+        desplazamiento = math.copysign(
+            min(abs(error_distancia), velocidad * dt),
+            error_distancia,
+        )
+        self.x += diferencia_x / distancia * desplazamiento
+        self.y += diferencia_y / distancia * desplazamiento
+        self.rect.topleft = (round(self.x), round(self.y))
+        self.sincronizar_hurtbox()
+
+    def _atacar(self, _dt, jugador):
+        jugador_a_la_derecha = jugador.hurtbox.centerx >= self.hurtbox.centerx
+        ataque_x = (
+            self.hurtbox.right
+            if jugador_a_la_derecha
+            else self.hurtbox.left - self.ANCHO_ATTACKBOX
+        )
+        self.attackbox = pygame.Rect(
+            ataque_x,
+            jugador.hurtbox.centery - self.hurtbox.height // 2,
+            self.ANCHO_ATTACKBOX,
+            self.hurtbox.height,
+        )
+        self.cooldown_ataque = self.DURACION_COOLDOWN_ATAQUE
+        self.estado_actual = "PERSECUCIÓN"
 
     def dibujar(self, pantalla):
         pygame.draw.polygon(
@@ -226,6 +310,8 @@ class Enemigo(Nave):
         )
 
 class JefeFinal(Enemigo):
+    DURACION_INVULNERABILIDAD = Nave.DURACION_INVULNERABILIDAD
+
     def __init__(self, x, y, dificultad):
         super().__init__(x, y, 2.2, dificultad)
         self.rect.width = 120
@@ -256,10 +342,13 @@ class JefeFinal(Enemigo):
         
 
 class EnemigoPrueba(Nave):
+    DURACION_INVULNERABILIDAD = Enemigo.DURACION_INVULNERABILIDAD
+
     def __init__(self, x, y):
         super().__init__(x, y, 42, 30, 0, 3)
+        self.attackbox = None
 
-    def actualizar(self, dificultad):
+    def actualizar(self, _dt, _jugador=None):
         pass
 
     def dibujar(self, pantalla):
