@@ -228,6 +228,21 @@ class Enemigo(Nave):
             "PERSECUCIÓN": self._perseguir,
             "ATAQUE": self._atacar,
         }
+        self.gestor_audio = None
+        self.ruta_sonido_muerte = None
+
+    def configurar_audio_muerte(self, gestor_audio, ruta_sonido):
+        if gestor_audio is None or ruta_sonido is None:
+            raise ValueError("Se requieren el gestor y la ruta del efecto de muerte.")
+        self.gestor_audio = gestor_audio
+        self.ruta_sonido_muerte = ruta_sonido
+
+    def recibir_dano(self, cantidad):
+        estaba_vivo = self.esta_vivo()
+        salud_actual = super().recibir_dano(cantidad)
+        if estaba_vivo and salud_actual == 0 and self.gestor_audio is not None:
+            self.gestor_audio.reproducir_efecto(self.ruta_sonido_muerte)
+        return salud_actual
 
     def actualizar(self, dt, jugador):
         self.cooldown_ataque = max(0.0, self.cooldown_ataque - dt)

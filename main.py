@@ -4,9 +4,12 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from enum import Enum
+from pathlib import Path
 
 import pygame
 
+from audio import GestorAudio
+from particulas import EmisorParticulas
 from interfaz import BotonUI, GestorUI
 from entidades import (
     Proyectil,
@@ -21,6 +24,9 @@ from entidades import (
 ANCHO_PANTALLA = 960
 ALTO_PANTALLA = 540
 FPS = 60
+RUTA_SONIDO_EXPLOSION = (
+    Path(__file__).resolve().parent / "assets" / "explosion.wav"
+)
 
 
 class EstadoJuego(Enum):
@@ -42,9 +48,19 @@ class EscenaBase(ABC):
 
 
 class GestorEscenas:
+    VELOCIDAD_FUNDIDO = 510.0
+
     def __init__(self):
         self.estados = {}
         self.estado_actual = None
+        self.escena_destino = None
+        self.opacidad_fundido = 0.0
+        self._direccion_fundido = 0
+        self._superficie_fundido = pygame.Surface(
+            (ANCHO_PANTALLA, ALTO_PANTALLA)
+        )
+        self._superficie_fundido.fill((0, 0, 0))
+        self._rectangulo_fundido = self._superficie_fundido.get_rect()
 
     def registrar_escena(self, nombre, escena):
         if not isinstance(escena, EscenaBase):
@@ -59,18 +75,51 @@ class GestorEscenas:
             raise ValueError(f"No existe la escena '{nombre}'.")
         self.estado_actual = nombre
 
+    def iniciar_transicion(self, nombre):
+        if nombre not in self.estados:
+            raise ValueError(f"No existe la escena '{nombre}'.")
+        if self._direccion_fundido != 0 or nombre == self.estado_actual:
+            return
+
+        self.escena_destino = nombre
+        self.opacidad_fundido = 0.0
+        self._direccion_fundido = 1
+
     def _obtener_escena_actual(self):
         if self.estado_actual is None:
             raise RuntimeError("No hay una escena activa.")
         return self.estados[self.estado_actual]
 
-    def actualizar(self, dt):
-        self._obtener_escena_actual().actualizar(dt)
+    def actualizar(self, dt, actualizar_escena=True):
+        if actualizar_escena:
+            self._obtener_escena_actual().actualizar(dt)
+
+        if self._direccion_fundido == 0:
+            return
+
+        self.opacidad_fundido += self._direccion_fundido * (
+            self.VELOCIDAD_FUNDIDO * dt
+        )
+        self.opacidad_fundido = max(0.0, min(255.0, self.opacidad_fundido))
+
+        if self._direccion_fundido > 0 and self.opacidad_fundido >= 255:
+            self.cambiar_escena(self.escena_destino)
+            self._direccion_fundido = -1
+        elif self._direccion_fundido < 0 and self.opacidad_fundido <= 0:
+            self._direccion_fundido = 0
+            self.escena_destino = None
 
     def dibujar(self, pantalla):
         self._obtener_escena_actual().dibujar(pantalla)
+        if self._direccion_fundido != 0 or self.opacidad_fundido > 0:
+            self._superficie_fundido.set_alpha(round(self.opacidad_fundido))
+            pantalla.blit(
+                self._superficie_fundido, self._rectangulo_fundido
+            )
 
     def manejar_evento(self, evento):
+        if self._direccion_fundido != 0:
+            return
         self._obtener_escena_actual().manejar_evento(evento)
 
 
@@ -120,11 +169,14 @@ class Juego(EscenaBase):
         self.dificultad = 1
         self.estado = "jugando"
         self.texto_fin = ""
+        self.hitstop_pendiente = False
         self.font = pygame.font.SysFont(None, 32)
 
         self.jugador = Jugador(60, ALTO_PANTALLA // 2)
         self.salud_maxima = self.jugador.salud
         self.gestor_ui = GestorUI()
+        self.gestor_audio = GestorAudio()
+        self.emisor_particulas = EmisorParticulas()
         self.suelo = pygame.Rect(0, ALTO_PANTALLA - 20, ANCHO_PANTALLA, 20)
         self.objetos_estaticos = [
             self.suelo,
@@ -174,6 +226,12 @@ class Juego(EscenaBase):
 
         elif self.escenario == 3:
             self.boss = JefeFinal(700, 180, self.dificultad)
+
+        for personaje in [*self.enemigos, self.boss]:
+            if personaje is not None:
+                personaje.configurar_audio_muerte(
+                    self.gestor_audio, RUTA_SONIDO_EXPLOSION
+                )
 
     def cambiar_escenario(self):
         if self.escenario == 1 and not self.enemigos:
@@ -245,12 +303,22 @@ class Juego(EscenaBase):
         for proyectil in self.proyectiles_jugador[:]:
             proyectil.actualizar()
 
+    def _aplicar_dano_a_objetivo(self, objetivo, cantidad):
+        estaba_vivo = objetivo.esta_vivo()
+        objetivo.recibir_dano(cantidad)
+        if estaba_vivo and not objetivo.esta_vivo():
+            self.hitstop_pendiente = True
+            self.emisor_particulas.emitir(
+                *objetivo.hurtbox.center,
+                cantidad=EmisorParticulas.CANTIDAD_EXPLOSION,
+            )
+
     def _detectar_colisiones_proyectiles_enemigos(self):
         """Detecta impactos de proyectiles contra enemigos."""
         for proyectil in self.proyectiles_jugador[:]:
             for enemigo in self.enemigos[:]:
                 if proyectil.rect.colliderect(enemigo.hurtbox):
-                    enemigo.recibir_dano(1)
+                    self._aplicar_dano_a_objetivo(enemigo, 1)
                     self.proyectiles_jugador.remove(proyectil)
                     if not enemigo.esta_vivo():
                         self.enemigos.remove(enemigo)
@@ -261,7 +329,7 @@ class Juego(EscenaBase):
         if self.boss is not None:
             for proyectil in self.proyectiles_jugador[:]:
                 if proyectil.rect.colliderect(self.boss.hurtbox):
-                    self.boss.recibir_dano(1)
+                    self._aplicar_dano_a_objetivo(self.boss, 1)
                     self.proyectiles_jugador.remove(proyectil)
                     if not self.boss.esta_vivo():
                         self.estado = "victoria"
@@ -309,6 +377,7 @@ class Juego(EscenaBase):
         if not self.jugador.esta_vivo():
             self.estado = "derrota"
             self.texto_fin = "Derrota. La nave cayó en combate."
+            self.gestor_escenas.iniciar_transicion(EstadoJuego.MENU)
 
     def _actualizar_temporizadores_invulnerabilidad(self, dt):
         personajes = [self.jugador, *self.enemigos]
@@ -329,7 +398,7 @@ class Juego(EscenaBase):
 
         for objetivo in objetivos:
             if attackbox.colliderect(objetivo.hurtbox):
-                objetivo.recibir_dano(1)
+                self._aplicar_dano_a_objetivo(objetivo, 1)
                 self.jugador.ataque_aplicado = True
                 if not objetivo.esta_vivo():
                     if objetivo is self.boss:
@@ -350,6 +419,7 @@ class Juego(EscenaBase):
         self._detectar_colisiones_enemigos_jugador()
 
     def actualizar(self, dt):
+        self.emisor_particulas.actualizar(dt)
         if self.estado != "jugando":
             return
 
@@ -393,6 +463,7 @@ class Juego(EscenaBase):
         for proyectil in self.proyectiles_jugador:
             proyectil.dibujar(pantalla)
 
+        self.emisor_particulas.dibujar(pantalla)
         self.dibujar_hud(pantalla)
 
         if self.jugador.attackbox is not None:
@@ -413,12 +484,19 @@ class Juego(EscenaBase):
 
     def ejecutar(self):
         corriendo = True
-        ejecutando = True
-        estado_juego = "jugando"
+        tiempo_hitstop = 0.0
         while corriendo:
             dt = self.reloj.tick(FPS) / 1000.0
             corriendo = self.manejar_eventos()
-            self.gestor_escenas.actualizar(dt)
+            if self.hitstop_pendiente:
+                tiempo_hitstop = 0.1
+                self.hitstop_pendiente = False
+
+            if tiempo_hitstop > 0:
+                tiempo_hitstop = max(0.0, tiempo_hitstop - dt)
+                self.gestor_escenas.actualizar(dt, actualizar_escena=False)
+            else:
+                self.gestor_escenas.actualizar(dt)
             self.gestor_escenas.dibujar(self.pantalla)
             pygame.display.flip()
         pygame.quit()
