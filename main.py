@@ -7,6 +7,7 @@ from enum import Enum
 
 import pygame
 
+from interfaz import BotonUI, GestorUI
 from entidades import (
     Proyectil,
     Nave,
@@ -77,6 +78,13 @@ class EscenaMenu(EscenaBase):
     def __init__(self, gestor_escenas):
         self.gestor_escenas = gestor_escenas
         self.font = pygame.font.SysFont(None, 40)
+        self.boton_jugar = BotonUI(
+            ANCHO_PANTALLA // 2 - 100,
+            ALTO_PANTALLA // 2 + 50,
+            200,
+            56,
+            "JUGAR",
+        )
 
     def manejar_evento(self, evento):
         if evento.type == pygame.KEYDOWN and evento.key in (
@@ -84,15 +92,21 @@ class EscenaMenu(EscenaBase):
             pygame.K_KP_ENTER,
         ):
             self.gestor_escenas.cambiar_escena(EstadoJuego.NIVEL_1)
+        elif evento.type == pygame.MOUSEBUTTONDOWN:
+            if self.boton_jugar.comprobar_clic(
+                evento.pos, evento.button == pygame.BUTTON_LEFT
+            ):
+                self.gestor_escenas.cambiar_escena(EstadoJuego.NIVEL_1)
 
     def actualizar(self, dt):
-        pass
+        self.boton_jugar.actualizar(pygame.mouse.get_pos())
 
     def dibujar(self, pantalla):
         pantalla.fill((10, 12, 25))
         texto = self.font.render("Presionar ENTER para comenzar", True, (255, 255, 255))
         rect_texto = texto.get_rect(center=(ANCHO_PANTALLA // 2, ALTO_PANTALLA // 2))
         pantalla.blit(texto, rect_texto)
+        self.boton_jugar.dibujar(pantalla)
 
 
 
@@ -109,6 +123,8 @@ class Juego(EscenaBase):
         self.font = pygame.font.SysFont(None, 32)
 
         self.jugador = Jugador(60, ALTO_PANTALLA // 2)
+        self.salud_maxima = self.jugador.salud
+        self.gestor_ui = GestorUI()
         self.suelo = pygame.Rect(0, ALTO_PANTALLA - 20, ANCHO_PANTALLA, 20)
         self.objetos_estaticos = [
             self.suelo,
@@ -390,6 +406,10 @@ class Juego(EscenaBase):
             texto = self.font.render(self.texto_fin, True, (255, 255, 255))
             rect_texto = texto.get_rect(center=(ANCHO_PANTALLA // 2, ALTO_PANTALLA // 2))
             pantalla.blit(texto, rect_texto)
+
+        self.gestor_ui.dibujar_barra_salud(
+            pantalla, self.jugador.salud, self.salud_maxima
+        )
 
     def ejecutar(self):
         corriendo = True
